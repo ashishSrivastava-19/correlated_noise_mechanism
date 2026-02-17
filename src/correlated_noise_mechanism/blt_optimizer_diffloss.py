@@ -1,4 +1,8 @@
+import logging
+
 import torch
+
+logger = logging.getLogger(__name__)
 
 torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
@@ -216,9 +220,9 @@ class BLTDifferentiableLossOptimizer:
                 }
 
             if verbose and (i % 10 == 0 or i == num_iterations - 1):
-                print(f"Iteration {i}, Loss: {loss.item()}")
+                logger.info("Iteration %d, Loss: %s", i, loss.item())
 
         if verbose:
-            print(f"Optimization completed. Final loss: {best_loss}")
+            logger.info("Optimization completed. Final loss: %s", best_loss)
 
         return best_params

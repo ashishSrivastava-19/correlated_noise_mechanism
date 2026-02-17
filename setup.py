@@ -15,7 +15,10 @@ setup(
         "numpy >= 1.26.4",
         "torch >= 2.3.0",
         "torchvision >= 0.18.0",
-        "opacus >= 1.5.2"
+        "opacus >= 1.5.2",
+        "dp-accounting",
+        "scipy",
+        "tqdm",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

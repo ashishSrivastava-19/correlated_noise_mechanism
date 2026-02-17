@@ -1,18 +1,23 @@
+import logging
 import warnings
 from itertools import chain
 from typing import List, Optional, Tuple, Union
-from utils import get_noise_multiplier
+
 import torch
 from torch import optim, nn
-from opacus import PrivacyEngine
-from optimizers import get_optimizer_class
-from optimizers.optimizer import CNMOptimizer
-from blt_optimizer import BLTOptimizer
-from blt_optimizer_diffloss import BLTDifferentiableLossOptimizer
-from opacus.utils.fast_gradient_clipping_utils import DPOptimizerFastGradientClipping
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
+from opacus import PrivacyEngine
 from opacus.distributed import DifferentiallyPrivateDistributedDataParallel as DPDDP
+from opacus.utils.fast_gradient_clipping_utils import DPOptimizerFastGradientClipping
+
+from .utils import get_noise_multiplier
+from .optimizers import get_optimizer_class
+from .optimizers.optimizer import CNMOptimizer
+from .blt_optimizer import BLTOptimizer
+from .blt_optimizer_diffloss import BLTDifferentiableLossOptimizer
+
+logger = logging.getLogger(__name__)
 from opacus.grad_sample import (
     AbstractGradSampleModule,
     GradSampleModule,
@@ -368,11 +373,11 @@ class CNMEngine(PrivacyEngine):
             )
             results = blt_optimizer.optimize(num_iterations=50, lr=0.01, verbose=False)
             best_loss = results["loss"]
-            print("\n" + "=" * 50)
-            print("Optimization Results:")
-            print("=" * 50)
-            print(f"Final objective value: {best_loss:.6e}")
-            print("\n" + "=" * 50)
+            logger.info("=" * 50)
+            logger.info("Optimization Results:")
+            logger.info("=" * 50)
+            logger.info("Final objective value: %.6e", best_loss)
+            logger.info("=" * 50)
             a, lamda = results["omega"], results["theta"]
         else:
             a, lamda = 0, 0

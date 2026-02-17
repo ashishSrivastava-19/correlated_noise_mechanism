@@ -1,14 +1,16 @@
-from typing import Optional
-from math import log10, sqrt
+import logging
+from math import sqrt
+from typing import List, Optional, Union
+
 import numpy as np
-import dp_accounting
-from dp_accounting.rdp import compute_epsilon
-from scipy import optimize as opt
+import torch
 from dp_accounting import dp_event as event
 from dp_accounting.pld import pld_privacy_accountant as pld
+from dp_accounting.rdp import compute_epsilon
 from dp_accounting.rdp import rdp_privacy_accountant as rdp
-from typing import Callable, List, Optional, Union
-import torch
+from scipy import optimize as opt
+
+logger = logging.getLogger(__name__)
 
 MAX_SIGMA = 1e6
 RDP_ORDERS = (
@@ -140,8 +142,8 @@ def get_noise_multiplier(
     if steps is None:
         steps = int(1 / sample_rate)
 
-    print(f"Mode : {mode}")
-    print(f"Participation : {participation}")
+    logger.info("Mode : %s", mode)
+    logger.info("Participation : %s", participation)
 
     if mode == "DP-SGD-BASE":
         noise_multiplier = calculate_multiplier(
@@ -155,7 +157,7 @@ def get_noise_multiplier(
         if participation == "streaming":
             col_norm = get_column_norm(a.cpu().numpy(), lamda.cpu().numpy(), steps)
             noise_multiplier = sqrt((epochs * col_norm) / (2 * target_epsilon))
-            print(f"Noise Multiplier : {noise_multiplier}")
+            logger.info("Noise Multiplier : %s", noise_multiplier)
             return noise_multiplier
         elif participation == "cyclic" or participation == "minSep":
             col_norm = calculate_sensitivity_squared(
@@ -168,14 +170,12 @@ def get_noise_multiplier(
     else:
         if mode == "BLT":
             col_norm = get_column_norm(a.cpu().numpy(), lamda.cpu().numpy(), steps)
-        if mode == "Single Parameter":
+        elif mode == "Single Parameter":
             col_norm = (1 - gamma ** (steps)) / (1 - gamma)
+        else:
+            raise ValueError(f"Unknown mode '{mode}'")
 
-        # log_del = np.log(1 / target_delta)
-        # optimal_rho = (2 * target_epsilon + log_del) / 2 + (
-        #    np.sqrt(4 * target_epsilon * log_del + log_del**2)
-        # ) / 2
         optimal_rho = calculate_rho(target_epsilon, target_delta)
         noise_multiplier = sqrt((epochs * col_norm) / (2 * optimal_rho))
-    print(f"Noise Multiplier : {noise_multiplier}")
+    logger.info("Noise Multiplier : %s", noise_multiplier)
     return noise_multiplier

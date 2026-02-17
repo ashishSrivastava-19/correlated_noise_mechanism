@@ -1,5 +1,9 @@
+import logging
+
 import torch
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class BLTOptimizer:
@@ -232,13 +236,13 @@ class BLTOptimizer:
                 best_params = params.detach().clone()
 
             if verbose and i % 100 == 0:
-                print(f"Iteration {i}, Loss: {loss.item()}")
+                logger.info("Iteration %d, Loss: %s", i, loss.item())
 
         alpha_opt = torch.abs(best_params[: self.d])
         lambda_opt = torch.clamp(best_params[self.d : 2 * self.d], 0, 0.999)
         alpha_hat_opt = -torch.abs(best_params[2 * self.d : 3 * self.d])
         lambda_hat_opt = torch.clamp(best_params[3 * self.d :], 0, 0.999)
-        print(f"Optimization Completed")
+        logger.info("Optimization Completed")
         return {
             "alpha": alpha_opt,
             "lambda": lambda_opt,

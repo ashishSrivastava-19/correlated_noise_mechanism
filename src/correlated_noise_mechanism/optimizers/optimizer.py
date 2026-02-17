@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import logging
 from typing import List, Optional, Union
 
 import torch
 from opacus.optimizers import DPOptimizer
 from torch.optim import Optimizer
-
-logger = logging.getLogger(__name__)
-logger.disabled = True
 
 
 def _mark_as_processed(obj: Union[torch.Tensor, List[torch.Tensor]]):
@@ -150,10 +146,19 @@ def _generate_noise(
         )
 
 
+_VALID_MODES = {
+    "DP-SGD-BASE",
+    "DP-SGD-AMPLIFIED",
+    "BLT",
+    "Multi-Epoch-BLT",
+    "Single Parameter",
+}
+
+
 class CNMOptimizer(DPOptimizer):
     """
     This class extends the DPOptimizer class from Opacus to provide
-    the functionality of performing Corrrelated Noise Mechanism for
+    the functionality of performing Correlated Noise Mechanism for
     differentially private training
     """
 
@@ -175,13 +180,29 @@ class CNMOptimizer(DPOptimizer):
     ):
         """
         Args:
-            mode: specify the mode of operation of the optimizer. ['DP-SGD', 'BLT', 'Single Parameter']
+            mode: specify the mode of operation of the optimizer.
+                  Must be one of 'DP-SGD-BASE', 'DP-SGD-AMPLIFIED', 'BLT',
+                  'Multi-Epoch-BLT', or 'Single Parameter'.
             steps: number of steps after which the cache is reset
             a: parameters for BLT mode
             lamda: parameters for BLT mode
             gamma: a scalar for Single Parameter mode
         """
-        # super().__init__()
+        if mode not in _VALID_MODES:
+            raise ValueError(
+                f"Unknown mode '{mode}'. Must be one of {_VALID_MODES}"
+            )
+        if mode in ("BLT", "Multi-Epoch-BLT"):
+            if a is None or lamda is None:
+                raise ValueError(
+                    f"Mode '{mode}' requires both 'a' and 'lamda' to be provided"
+                )
+        if mode == "Single Parameter":
+            if gamma is None:
+                raise ValueError(
+                    "Mode 'Single Parameter' requires 'gamma' to be provided"
+                )
+
         self.original_optimizer = optimizer
         self.noise_multiplier = noise_multiplier
         self.max_grad_norm = max_grad_norm
@@ -240,9 +261,6 @@ class CNMOptimizer(DPOptimizer):
                 noise_shape.append(self.a.shape[0])
                 if i not in self.cache_state:
                     self.cache_state[i] = torch.zeros(tuple(noise_shape)).to(self.a.device)
-                """if i not in self.cache_state.keys():
-                    p.grad = (p.summed_grad + noise).view_as(p)
-                else:"""
                 noise = noise - torch.tensordot(
                     self.cache_state[i], self.a, dims=([-1], [0])
                 )
@@ -256,7 +274,6 @@ class CNMOptimizer(DPOptimizer):
                         p.summed_grad + noise - (self.gamma) * self.cache_state[i]
                     ).view_as(p)
                 self.cache(noise, i)
-            # print(self.cache_state[i])
             _mark_as_processed(p.summed_grad)
 
         self.step_counter += 1
@@ -265,4 +282,3 @@ class CNMOptimizer(DPOptimizer):
                 pass
             else:
                 self.cache_state = self.reset_cache()
-            # print("Cache reset")
