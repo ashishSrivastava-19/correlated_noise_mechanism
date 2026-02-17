@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="correlated_noise_mechanism",
-    version="0.3.0",
+    version="0.3.1",
     author="Ashish Srivastava",
     author_email="ashish.srivastava1919@gmail.com",
     description="Implementation of correlated noise mechanism with streaming and multi epoch settings to enable differentially private deep learning",
