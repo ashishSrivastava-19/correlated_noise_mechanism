@@ -204,7 +204,7 @@ class CNMOptimizer(DPOptimizer):
             p.summed_grad = None
 
     def cache(self, noise, param_id=None):
-        if self.mode == "BLT":
+        if self.mode == "BLT" or self.mode == "Multi-Epoch-BLT":
             d1 = torch.ones(self.a.shape[0]).T.view(1, -1).to(self.a.device)
             update = noise.unsqueeze(-1) * d1
             diag = torch.diag(self.lamda).to(self.lamda.device)
@@ -238,7 +238,8 @@ class CNMOptimizer(DPOptimizer):
             if self.mode == "BLT" or self.mode == "Multi-Epoch-BLT":
                 noise_shape = list(noise.shape)
                 noise_shape.append(self.a.shape[0])
-                self.cache_state[i] = torch.zeros(tuple(noise_shape)).to(self.a.device)
+                if i not in self.cache_state:
+                    self.cache_state[i] = torch.zeros(tuple(noise_shape)).to(self.a.device)
                 """if i not in self.cache_state.keys():
                     p.grad = (p.summed_grad + noise).view_as(p)
                 else:"""
