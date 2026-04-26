@@ -112,12 +112,33 @@ Explore our example gallery:
 
 ### Benchmarks
 
+FashionMNIST with the CNN from `examples/model_zoo.py`, batch size 1024, `max_grad_norm = 1`.
+SGD baselines use `lr=1` and 50 epochs (matching the historical setup);
+CNM-AdamBC uses Adam with `lr=1e-2` and 50 epochs.
+
 | Method | $\epsilon$ | $\delta$ | Accuracy |
 |--------|-------------|-------------|----------|
 | BLT (Multi Epoch) | 8 | $N^{-1.1}$ | 82.4758 |
 | BLT (Streaming) | 8 | $N^{-1.1}$ | 76.3740 |
 | DP-SGD | 8 | $N^{-1.1}$ | 82.0090 |
+| CNM-AdamBC (Multi Epoch) | 8 | $N^{-1.1}$ | 83.7265 |
+| CNM-AdamBC (Streaming) | 8 | $N^{-1.1}$ | 79.2377 |
 | Non Private | $\infty$ | $0$ | 87.8557 |
+| Non Private (Adam) | $\infty$ | $0$ | 89.3236 |
+
+The two `CNM-AdamBC` rows extend the table with the time-varying-bias-corrected
+Adam optimizer (`mode="BLT-Adam"` / `mode="Multi-Epoch-BLT-Adam"`) introduced in
+v0.4. Reproduce any row by editing `examples/basic_usage.py` to set the
+relevant `mode` / `participation` / inner optimizer + `lr`:
+
+```bash
+python examples/basic_usage.py
+```
+
+`mode="BLT"` + `participation="streaming"` reproduces `BLT (Streaming)`;
+`mode="Multi-Epoch-BLT"` + `participation="minSep"` reproduces `BLT (Multi Epoch)`;
+the same with `mode="BLT-Adam"` / `mode="Multi-Epoch-BLT-Adam"` (and an Adam
+inner optimizer at `lr=1e-2`) reproduces the two `CNM-AdamBC` rows.
 
 
 ### Core Classes
@@ -148,7 +169,10 @@ class CNMEngine:
     max_grad_norm : Union[float, List[float]]
         The maximum norm of the per-sample gradients. Any gradient with norm higher than this will be clipped
     mode : str
-        Mode of operation: 'DP-SGD', 'BLT', 'Single Parameter', or 'Multi-Epoch-BLT'
+        Mode of operation: 'DP-SGD-BASE', 'DP-SGD-AMPLIFIED', 'BLT',
+        'Multi-Epoch-BLT', 'Single Parameter', 'BLT-Adam', or
+        'Multi-Epoch-BLT-Adam'. The two ``-Adam`` variants use
+        ``CNMAdamOptimizer`` (Adam with time-varying bias correction).
     participation : str
         Participation pattern: 'streaming', 'cyclic', or 'minSep'
     error_type : str
@@ -290,7 +314,10 @@ def make_private(
         The maximum norm of the per-sample gradients. Any gradient with norm higher than
         this will be clipped to this value.
     mode : str
-        Mode of operation: 'DP-SGD', 'BLT', 'Single Parameter', or 'Multi-Epoch-BLT'
+        Mode of operation: 'DP-SGD-BASE', 'DP-SGD-AMPLIFIED', 'BLT',
+        'Multi-Epoch-BLT', 'Single Parameter', 'BLT-Adam', or
+        'Multi-Epoch-BLT-Adam'. The two ``-Adam`` variants use
+        ``CNMAdamOptimizer`` (Adam with time-varying bias correction).
     a : Optional[Union[float, torch.Tensor]], default=None
         Parameters for BLT mode
     lamda : Optional[Union[float, torch.Tensor]], default=None
@@ -370,7 +397,10 @@ def make_private_with_epsilon(
         The maximum norm of the per-sample gradients. Any gradient with norm higher than
         this will be clipped to this value
     mode : str
-        Mode of operation: 'DP-SGD', 'BLT', 'Single Parameter', or 'Multi-Epoch-BLT'
+        Mode of operation: 'DP-SGD-BASE', 'DP-SGD-AMPLIFIED', 'BLT',
+        'Multi-Epoch-BLT', 'Single Parameter', 'BLT-Adam', or
+        'Multi-Epoch-BLT-Adam'. The two ``-Adam`` variants use
+        ``CNMAdamOptimizer`` (Adam with time-varying bias correction).
     a : Optional[Union[float, torch.Tensor]], default=None
         Parameters for BLT mode
     lamda : Optional[Union[float, torch.Tensor]], default=None

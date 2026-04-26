@@ -1,2 +1,10 @@
 dist/
 src/correlated_noise_mechanism.egg-info/
+references/
+.claude/
+results/
+FashionMNIST/
+tests/__pycache__/
+examples/__pycache__/
+src/correlated_noise_mechanism/__pycache__/
+src/correlated_noise_mechanism/optimizers/__pycache__/

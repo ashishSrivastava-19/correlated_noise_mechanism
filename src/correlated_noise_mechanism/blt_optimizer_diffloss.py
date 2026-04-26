@@ -5,7 +5,9 @@ import torch
 logger = logging.getLogger(__name__)
 
 torch.set_default_dtype(torch.float64)
-torch.autograd.set_detect_anomaly(True)
+# Note: do NOT enable torch.autograd.set_detect_anomaly globally here -- it is a
+# process-wide side effect that turns occasional NaN/Inf in the BLT inner loop
+# into hard crashes. The optimize() loop below already skips non-finite losses.
 
 
 class BLTDifferentiableLossOptimizer:
@@ -70,7 +72,12 @@ class BLTDifferentiableLossOptimizer:
 
         omega = torch.zeros(self.d, device=self.device)
         for i in range(self.d):
-            omega[i] = num(i) / den(i)
+            denom_i = den(i)
+            # Guard against denom_i == 0 (happens when two theta entries
+            # collapse onto the same value after the optimizer's clamp);
+            # adds a sign-preserving epsilon so the gradient flow is preserved.
+            sign = 1.0 if (denom_i.detach().item() if isinstance(denom_i, torch.Tensor) else denom_i) >= 0 else -1.0
+            omega[i] = num(i) / (denom_i + 1e-12 * sign)
         if flag:
             omega = torch.abs(omega)
         else:
@@ -171,10 +178,22 @@ class BLTDifferentiableLossOptimizer:
 
         return err * sens + penalty
 
-    def optimize(self, num_iterations=100, lr=0.001, verbose=False):
+    def optimize(self, num_iterations=100, lr=0.001, verbose=False, seed: int = 42):
         """
-        Optimize the parameters using gradient descent
+        Optimize the parameters using gradient descent.
+
+        Args:
+            num_iterations: number of inner Adam iterations.
+            lr: inner Adam learning rate.
+            verbose: print loss every 10 iterations.
+            seed: RNG seed for the initial (theta, theta_hat) draw. Fixed by
+                default so that repeated calls with the same (n, d, b, k,
+                participation, error_type) produce identical BLT parameters
+                -- otherwise the noise multiplier (which depends on these)
+                varies run-to-run. Set to None to disable seeding.
         """
+        if seed is not None:
+            torch.manual_seed(int(seed))
         theta = torch.sort(
             torch.rand(self.d, device=self.device), descending=True
         ).values
@@ -195,6 +214,13 @@ class BLTDifferentiableLossOptimizer:
             theta_constrained = torch.clamp(theta, min=0, max=1 - 1e-3)
             theta_hat_constrained = torch.clamp(theta_hat, min=0, max=1 - 1e-3)
             loss = self.differentiable_loss(theta_constrained, theta_hat_constrained)
+
+            # Guard against rare NaN/Inf loss (e.g. when the projection
+            # collapses two theta entries and the safe-divide doesn't fully
+            # recover). Skipping the backward/step leaves parameters where
+            # they are; the next iteration usually moves out of the bad region.
+            if not torch.isfinite(loss):
+                continue
 
             loss.backward()
             optimizer.step()
