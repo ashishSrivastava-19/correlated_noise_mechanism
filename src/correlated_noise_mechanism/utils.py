@@ -145,15 +145,22 @@ def get_noise_multiplier(
     logger.info("Mode : %s", mode)
     logger.info("Participation : %s", participation)
 
-    if mode == "DP-SGD-BASE":
+    # Adam variants share the noise mechanism with their underlying BLT mode
+    # (Adam is post-processing of an already-privatized gradient).
+    blt_mode_for_accounting = {
+        "BLT-Adam": "BLT",
+        "Multi-Epoch-BLT-Adam": "Multi-Epoch-BLT",
+    }.get(mode, mode)
+
+    if blt_mode_for_accounting == "DP-SGD-BASE":
         noise_multiplier = calculate_multiplier(
-            target_epsilon, target_delta, sample_rate, steps * epochs, mode
+            target_epsilon, target_delta, sample_rate, steps * epochs, blt_mode_for_accounting
         )
-    elif mode == "DP-SGD-AMPLIFIED":
+    elif blt_mode_for_accounting == "DP-SGD-AMPLIFIED":
         noise_multiplier = calculate_multiplier(
-            target_epsilon, target_delta, sample_rate, steps * epochs, mode
+            target_epsilon, target_delta, sample_rate, steps * epochs, blt_mode_for_accounting
         )
-    elif mode == "Multi-Epoch-BLT":
+    elif blt_mode_for_accounting == "Multi-Epoch-BLT":
         if participation == "streaming":
             col_norm = get_column_norm(a.cpu().numpy(), lamda.cpu().numpy(), steps)
             noise_multiplier = sqrt((epochs * col_norm) / (2 * target_epsilon))
@@ -168,9 +175,9 @@ def get_noise_multiplier(
         optimal_rho = calculate_rho(target_epsilon, target_delta)
         noise_multiplier = sqrt(col_norm / (2 * optimal_rho))
     else:
-        if mode == "BLT":
+        if blt_mode_for_accounting == "BLT":
             col_norm = get_column_norm(a.cpu().numpy(), lamda.cpu().numpy(), steps)
-        elif mode == "Single Parameter":
+        elif blt_mode_for_accounting == "Single Parameter":
             col_norm = (1 - gamma ** (steps)) / (1 - gamma)
         else:
             raise ValueError(f"Unknown mode '{mode}'")
@@ -179,3 +186,106 @@ def get_noise_multiplier(
         noise_multiplier = sqrt((epochs * col_norm) / (2 * optimal_rho))
     logger.info("Noise Multiplier : %s", noise_multiplier)
     return noise_multiplier
+
+
+def precompute_noise_variance_schedule(
+    a_hat: Union[torch.Tensor, np.ndarray],
+    lamda_hat: Union[torch.Tensor, np.ndarray],
+    n: int,
+    sigma_zeta: float,
+) -> torch.Tensor:
+    r"""
+    Precompute the per-step noise variance schedule :math:`\Phi_t` for CNM-AdamBC.
+
+    For BLT correlated noise with inverse-Toeplitz parameters
+    :math:`(\hat\omega, \hat\theta)`, the effective noise at step :math:`t` has variance
+
+    .. math::
+        \Phi_t = (\sigma\zeta)^2 \cdot S_t,
+        \quad S_t = \sum_{j=0}^{t} \hat c_j^2,
+
+    where :math:`\hat c_0 = 1` and
+    :math:`\hat c_t = \sum_{j=1}^d \hat\omega_j \hat\theta_j^{t-1}` for
+    :math:`t \geq 1`. This schedule is precomputed from public BLT parameters
+    and used by :class:`CNMAdamOptimizer` to subtract a time-varying bias
+    from Adam's second-moment estimate.
+
+    Args:
+        a_hat: Inverse scale parameters :math:`\hat\omega` of :math:`C^{-1}`,
+            shape ``(d,)``. Returned by ``BLTDifferentiableLossOptimizer.optimize``
+            as ``omega_hat``.
+        lamda_hat: Inverse decay parameters :math:`\hat\theta` of :math:`C^{-1}`,
+            shape ``(d,)``. Returned as ``theta_hat``.
+        n: Length of the schedule (typically steps per epoch).
+        sigma_zeta: Product of noise multiplier and clipping norm,
+            :math:`\sigma \cdot \zeta`.
+
+    Returns:
+        A 1-D tensor of length ``n`` holding :math:`\Phi_0, \Phi_1, \ldots, \Phi_{n-1}`.
+    """
+    if isinstance(a_hat, np.ndarray):
+        a_hat = torch.from_numpy(a_hat)
+    if isinstance(lamda_hat, np.ndarray):
+        lamda_hat = torch.from_numpy(lamda_hat)
+
+    # Pull onto CPU and float64 for numerical stability; the schedule is small
+    # (length n) and read scalar-by-scalar at training time, so CPU is fine.
+    a_hat = a_hat.detach().to(dtype=torch.float64, device="cpu").flatten()
+    lamda_hat = lamda_hat.detach().to(dtype=torch.float64, device="cpu").flatten()
+    d = a_hat.shape[0]
+
+    c_hat = torch.zeros(n, dtype=torch.float64)
+    c_hat[0] = 1.0
+    if n > 1 and d > 0:
+        # c_hat[t] = sum_j a_hat[j] * lamda_hat[j] ** (t-1) for t >= 1
+        # Vectorize: rows = exponents 0..n-2, cols = j; sum over j.
+        exponents = torch.arange(n - 1, dtype=torch.float64).unsqueeze(1)  # (n-1, 1)
+        powers = lamda_hat.unsqueeze(0) ** exponents  # (n-1, d)
+        c_hat[1:] = (powers * a_hat.unsqueeze(0)).sum(dim=1)
+
+    S = torch.cumsum(c_hat ** 2, dim=0)
+    return (sigma_zeta ** 2) * S
+
+
+def compute_steady_state_phi(
+    a_hat: Union[torch.Tensor, np.ndarray],
+    lamda_hat: Union[torch.Tensor, np.ndarray],
+    sigma_zeta: float,
+) -> float:
+    r"""
+    Closed-form steady-state noise variance for the BLT mechanism.
+
+    .. math::
+        \Phi_\infty = (\sigma\zeta)^2 \cdot
+        \left( 1 + \sum_{k=1}^d \sum_{l=1}^d
+        \frac{\hat\omega_k \hat\omega_l}{1 - \hat\theta_k \hat\theta_l} \right)
+
+    Useful as a default for the Adam stability constant
+    (e.g. ``gamma_prime = 0.01 * Phi_inf``) and for sanity-checking the
+    :func:`precompute_noise_variance_schedule` output.
+
+    Args:
+        a_hat: Inverse scale parameters, shape ``(d,)``.
+        lamda_hat: Inverse decay parameters, shape ``(d,)``; values strictly
+            in :math:`(0, 1)` are required for convergence of the geometric series.
+        sigma_zeta: Product of noise multiplier and clipping norm.
+
+    Returns:
+        :math:`\Phi_\infty` as a Python float.
+    """
+    if isinstance(a_hat, np.ndarray):
+        a_hat = torch.from_numpy(a_hat)
+    if isinstance(lamda_hat, np.ndarray):
+        lamda_hat = torch.from_numpy(lamda_hat)
+
+    a_hat = a_hat.detach().to(dtype=torch.float64, device="cpu").flatten()
+    lamda_hat = lamda_hat.detach().to(dtype=torch.float64, device="cpu").flatten()
+
+    outer = a_hat.unsqueeze(1) * a_hat.unsqueeze(0)              # (d, d)
+    denom = 1.0 - lamda_hat.unsqueeze(1) * lamda_hat.unsqueeze(0)
+    if torch.any(denom <= 0):
+        raise ValueError(
+            "compute_steady_state_phi: lamda_hat must satisfy 0 < theta_hat_k * theta_hat_l < 1"
+        )
+    S_inf = 1.0 + (outer / denom).sum().item()
+    return float((sigma_zeta ** 2) * S_inf)

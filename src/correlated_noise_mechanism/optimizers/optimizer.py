@@ -151,8 +151,18 @@ _VALID_MODES = {
     "DP-SGD-AMPLIFIED",
     "BLT",
     "Multi-Epoch-BLT",
+    "BLT-Adam",
+    "Multi-Epoch-BLT-Adam",
     "Single Parameter",
 }
+
+# Modes whose noise-correlation pipeline is structurally identical to plain
+# "BLT" (per-step cache reset at epoch boundary).  Used in CNMOptimizer.add_noise
+# and .cache so that the Adam variants share the BLT noise machinery and only
+# differ in the post-noise update rule (handled by CNMAdamOptimizer.adam_step).
+_BLT_LIKE_MODES = {"BLT", "BLT-Adam"}
+_MULTI_EPOCH_BLT_LIKE_MODES = {"Multi-Epoch-BLT", "Multi-Epoch-BLT-Adam"}
+_ALL_BLT_MODES = _BLT_LIKE_MODES | _MULTI_EPOCH_BLT_LIKE_MODES
 
 
 class CNMOptimizer(DPOptimizer):
@@ -192,7 +202,7 @@ class CNMOptimizer(DPOptimizer):
             raise ValueError(
                 f"Unknown mode '{mode}'. Must be one of {_VALID_MODES}"
             )
-        if mode in ("BLT", "Multi-Epoch-BLT"):
+        if mode in _ALL_BLT_MODES:
             if a is None or lamda is None:
                 raise ValueError(
                     f"Mode '{mode}' requires both 'a' and 'lamda' to be provided"
@@ -225,7 +235,7 @@ class CNMOptimizer(DPOptimizer):
             p.summed_grad = None
 
     def cache(self, noise, param_id=None):
-        if self.mode == "BLT" or self.mode == "Multi-Epoch-BLT":
+        if self.mode in _ALL_BLT_MODES:
             d1 = torch.ones(self.a.shape[0]).T.view(1, -1).to(self.a.device)
             update = noise.unsqueeze(-1) * d1
             diag = torch.diag(self.lamda).to(self.lamda.device)
@@ -256,7 +266,7 @@ class CNMOptimizer(DPOptimizer):
             if self.mode == "DP-SGD-BASE" or self.mode == "DP-SGD-AMPLIFIED":
                 p.grad = (p.summed_grad + noise).view_as(p)
 
-            if self.mode == "BLT" or self.mode == "Multi-Epoch-BLT":
+            if self.mode in _ALL_BLT_MODES:
                 noise_shape = list(noise.shape)
                 noise_shape.append(self.a.shape[0])
                 if i not in self.cache_state:
@@ -278,7 +288,7 @@ class CNMOptimizer(DPOptimizer):
 
         self.step_counter += 1
         if self.step_counter % self.steps == 0:
-            if self.mode == "Multi-Epoch-BLT":
+            if self.mode in _MULTI_EPOCH_BLT_LIKE_MODES:
                 pass
             else:
                 self.cache_state = self.reset_cache()

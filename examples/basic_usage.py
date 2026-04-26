@@ -35,14 +35,14 @@ test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=Fa
 model = CNN()
 ModuleValidator.validate(model, strict=False)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# device = "cpu"
+#device = "cpu"
 model = model.to(device)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=1)
+optimizer = optim.Adam(model.parameters(), lr=1e-2)
 
 privacy_engine = CNMEngine()
 
-EPOCHS = 20
+EPOCHS = 50
 model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
     module=model,
     optimizer=optimizer,
@@ -51,7 +51,7 @@ model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
     target_epsilon=epsilon,
     target_delta=delta,
     max_grad_norm=grad_norm,
-    mode="BLT",
+    mode="BLT-Adam",
     participation="streaming",
     error_type="rmse",
     d=4,
@@ -60,4 +60,7 @@ model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
 )
 
 for epoch in tqdm(range(int(EPOCHS)), desc="Epoch", unit="epoch"):
-    _ = train_no_dp(model, train_loader, optimizer, criterion, epoch + 1, device)
+    _ = train(model, train_loader, optimizer, criterion, epoch + 1, device)
+
+test_acc = test(model, test_loader, criterion, device)
+print(f"Final test accuracy: {test_acc * 100:.4f}%")
